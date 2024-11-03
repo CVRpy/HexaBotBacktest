@@ -386,6 +386,7 @@ if __name__ == "__main__":
     reader = SqlReader()
     print(reader.get_tables())
     Backtest.set_db(input('Please write name of table: '))
+    dbname = Backtest._db
 
     # Define parameter ranges
     pct_buy = np.round(np.arange(-4, 5, 0.3), 1)    # Pct buy thresholds
@@ -472,25 +473,24 @@ if __name__ == "__main__":
             dt = datetime.now()
             if dt.minute % 2 == 0 and (18 <= dt.second <= 20):
                 print("\033c")
-                df = pd.read_csv(csv_file_path)
+                
+                # Read only necessary columns from the CSV
+                columns_to_read = ['pct_buy', 'pct_sell', 'rsi_buy', 'rsi_sell',
+                                '# Trades', 'Win Rate [%]', 'Return [%]',
+                                'Max. Drawdown [%]', 'Final Cash']
+                df = pd.read_csv(csv_file_path, usecols=columns_to_read)
 
-                # Sort the DataFrame by 'Final Cash' and 'Max. Drawdown [%]'
-                sorted_df = df.sort_values(
-                    by=['Final Cash', 'Max. Drawdown [%]'], ascending=[False, True])
-
-                # Filter to keep only rows where Max. Drawdown [%] is greater than -60%
-                filtered_df = sorted_df[sorted_df['Max. Drawdown [%]'] > -60]
+                # Filter the DataFrame to keep only rows where Max. Drawdown [%] is greater than -60%
+                df = df[df['Max. Drawdown [%]'] > -60]
 
                 # Drop duplicates based on 'Final Cash' to get unique final cash values
-                unique_final_cash_df = filtered_df.drop_duplicates(subset=['Final Cash'])
+                df.drop_duplicates(subset=['Final Cash'], inplace=True)
 
-                # Select the important columns for display
-                important_columns = ['pct_buy', 'pct_sell', 'rsi_buy', 'rsi_sell',
-                                    '# Trades', 'Win Rate [%]', 'Return [%]',
-                                    'Max. Drawdown [%]', 'Final Cash']
+                # Sort the DataFrame by 'Final Cash' and 'Max. Drawdown [%]'
+                df.sort_values(by=['Final Cash', 'Max. Drawdown [%]'], ascending=[False, True], inplace=True)
 
-                # Get the top 25 entries from the unique final cash DataFrame
-                top_final_cash = unique_final_cash_df[important_columns].head(25)
+                # Get the top 25 entries
+                top_final_cash = df.head(25)
 
                 # Round columns for readability
                 top_final_cash = top_final_cash.round({
@@ -502,7 +502,7 @@ if __name__ == "__main__":
 
                 # Print the top rows in a formatted table with the "pretty" style
                 print("---------------------------HEXABOT Rami Sayed----------------------")
-                print(f"Highest Final Cash and Max Drawdown ")
+                if not top_final_cash.empty:
+                    print(f"Highest Final Cash and Max Drawdown: {row['pct_buy']}: {row['pct_sell']} | {row['rsi_buy']}: {row['rsi_sell']} | {dbname}")
                 print("-------------------------------------------------------------------")
-                print(tabulate(top_final_cash, headers='keys',
-                    tablefmt='pretty', showindex=False))
+                print(tabulate(top_final_cash, headers='keys', tablefmt='pretty', showindex=False))
