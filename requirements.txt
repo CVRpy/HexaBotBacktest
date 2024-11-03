@@ -1,0 +1,7 @@
+ta
+numpy
+pandas
+matplotlib
+python-binance
+sqlalchemy
+tabulate
