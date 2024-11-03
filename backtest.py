@@ -8,11 +8,10 @@ import os
 from datetime import datetime
 from tabulate import tabulate
 
-
 class DataSQL():
     db = 'live_crypto.db'
     
-    def __init__(self,symbol,interval,start,end) -> None:
+    def __init__(self, symbol, interval, start, end) -> None:
         self.symbol = symbol
         self.interval = interval
         self.start = start
@@ -20,13 +19,13 @@ class DataSQL():
         self.client = Client()
         self.df_sql = None
         self.db = 'live_crypto.db'
-        self.data()
-        self.database()
-        self.save_to_sql()
-        pd.read_sql(self.table_name, self.engine) 
-        
+        self.data()  # Fetch historical data
+        self.database()  # Create database connection
+        self.save_to_sql()  # Save data to SQL
+        pd.read_sql(self.table_name, self.engine)  # Read SQL table
         
     def data(self):
+        # Define time intervals
         intervals = {
             '1m': 1, '3m': 3, '5m': 5, '15m': 15,
             '30m': 30, '1h': 60, '2h': 120,
@@ -34,6 +33,7 @@ class DataSQL():
             '1w': 10080
         }
         
+        # Fetch and format historical data
         self.df = pd.DataFrame(self.client.get_historical_klines(self.symbol, self.interval, self.start, self.end))
         self.df = self.df[[0, 1, 2, 3, 4, 5]]
         self.df.columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
@@ -42,77 +42,68 @@ class DataSQL():
         self.df[["Open", "High", "Low", "Close", "Volume"]] = self.df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
         self.df['pct_change24h'] = self.df['Close'].pct_change(periods=(24 * 60) // intervals[self.interval]) * 100
 
-        ## Indicators:
-        self.df['ma_7'] = self.df.Close.rolling(7).mean()
-        self.df['ma_21'] = self.df.Close.rolling(21).mean()  
-        self.df['vol'] = self.df.Close.rolling(21).std()
-        self.df['upper_bb'] = self.df.ma_21 + (2 * self.df.vol)
-        self.df['lower_bb'] = self.df.ma_21 - (2 * self.df.vol)
-        self.df['rsi'] = ta.momentum.rsi(self.df.Close, window=14)
-        self.df['price'] = self.df.Open.shift(-1)
-        self.df.dropna(inplace=True)
-        
+        # Calculate indicators
+        self.df['ma_7'] = self.df.Close.rolling(7).mean()  # 7-period moving average
+        self.df['ma_21'] = self.df.Close.rolling(21).mean()  # 21-period moving average
+        self.df['vol'] = self.df.Close.rolling(21).std()  # 21-period volatility
+        self.df['upper_bb'] = self.df.ma_21 + (2 * self.df.vol)  # Upper Bollinger Band
+        self.df['lower_bb'] = self.df.ma_21 - (2 * self.df.vol)  # Lower Bollinger Band
+        self.df['rsi'] = ta.momentum.rsi(self.df.Close, window=14)  # RSI calculation
+        self.df['price'] = self.df.Open.shift(-1)  # Next period's opening price
+        self.df.dropna(inplace=True)  # Remove missing values
 
-
-        
         if self.df.empty:
-            raise ValueError('DataFrame is empty')
+            raise ValueError('DataFrame is empty')  # Raise error if DataFrame is empty
         
         return self.df
     
     def database(self):
-        self.engine = create_engine('sqlite:///'+self.db)
+        self.engine = create_engine('sqlite:///' + self.db)  # Create SQL engine
         return self.engine
-
 
     def save_to_sql(self):
         start_index = str(self.df.index[1])[:10].replace(" ", "-").replace(":", "-")
-        #end_index = str(self.df.index[-1])[:16].replace(" ", "-").replace(":", "-")
-        self.table_name = str(self.interval+self.symbol+start_index)
+        self.table_name = str(self.interval + self.symbol + start_index)  # Table name based on parameters
         
         try:
-            if not os.path.exists(self.db):
-                print(f'DB NOT Exists .. Creating New DB : {self.table_name}')
-                self.df_sql = self.df.to_sql(self.table_name, self.engine)
-                self.engine.dispose()
+            if not os.path.exists(self.db):  # Check if database exists
+                print(f'DB NOT Exists .. Creating New DB: {self.table_name}')
+                self.df_sql = self.df.to_sql(self.table_name, self.engine)  # Save DataFrame to SQL
+                self.engine.dispose()  # Close engine connection
                 return self.df_sql 
 
-            elif os.path.exists(self.db):
+            elif os.path.exists(self.db):  # If database exists
                 inspector = inspect(self.engine)
-                if self.table_name in inspector.get_table_names():
-                    self.df_sql = pd.read_sql(self.table_name,self.engine)
+                if self.table_name in inspector.get_table_names():  # Check if table exists
+                    self.df_sql = pd.read_sql(self.table_name, self.engine)
                     self.max_date_sql = self.df_sql['Date'].iloc[-1].strftime('%Y-%m-%d %H:%M:%S')
                     self.NotUpdatedRows = self.df[self.df.index > self.max_date_sql] 
-                    self.df[self.df.index > self.max_date_sql].to_sql(self.table_name, self.engine,if_exists='append')
-                    print(f'DB and Table already exists .. Updating : {self.table_name} by: {len(self.NotUpdatedRows)} rows ')
-                    self.engine.dispose()
+                    self.df[self.df.index > self.max_date_sql].to_sql(self.table_name, self.engine, if_exists='append')  # Append new rows
+                    print(f'DB and Table already exists .. Updating: {self.table_name} by: {len(self.NotUpdatedRows)} rows ')
+                    self.engine.dispose()  # Close engine connection
                     return self.df_sql
-                    #return self.NotUpdatedRows
                 
-
-                elif self.table_name not in inspector.get_table_names():
+                elif self.table_name not in inspector.get_table_names():  # Create new table
                     print(f'DB already exists .. Creating new Table for {self.table_name}')
-                    self.df_sql = self.df.to_sql(self.table_name, self.engine)
-                    self.engine.dispose()
+                    self.df_sql = self.df.to_sql(self.table_name, self.engine)  # Save DataFrame to new table
+                    self.engine.dispose()  # Close engine connection
                     return self.df_sql      
 
         except:
-            self.engine.dispose()
-            raise Warning('DF to sql has an issue')
+            self.engine.dispose()  # Close engine connection on error
+            raise Warning('DF to SQL has an issue')  # Raise warning if an error occurs
 
 
 class SqlReader(DataSQL):
     def __init__(self) -> None:
-        self.db = DataSQL.db
-        self.engine = create_engine(f'sqlite:///{self.db}')
+        self.db = DataSQL.db  # Inherit database name
+        self.engine = create_engine(f'sqlite:///{self.db}')  # Create SQL engine
         self.tables = [] 
-        self.tables =  inspect(self.engine).get_table_names()
+        self.tables = inspect(self.engine).get_table_names()  # Get table names
         
-
     def get_tables(self):
-        return self.tables
+        return self.tables  # Return available table names
 
-    
     def df_sql_reader(self, table_index=None):
         """Fetches data from a selected table by index and returns it as a DataFrame."""
         try:
@@ -122,44 +113,40 @@ class SqlReader(DataSQL):
                 print("No tables available in the database.")
                 return None
             
-            # Display numbered list of tables
+            # Display list of tables
             print("Available tables:")
             for idx, self.table_name in enumerate(self.tables, 1):
                 print(f"{idx}: {self.table_name}")
 
-            # If no table index is provided, prompt the user to choose one
+            # Prompt user to choose a table if no index is provided
             if table_index is None:
                 table_index = int(input("Enter the number of the table to print: "))
 
-            # Check if the selected index is valid
+            # Validate selected index
             if table_index < 1 or table_index > len(self.tables):
                 print(f"Invalid selection. Please enter a number between 1 and {len(self.tables)}.")
                 return None
 
-            # Get the selected table name and read the data
+            # Read the selected table into a DataFrame
             self.table_name = self.tables[table_index - 1]
             self.df_sql = pd.read_sql(self.table_name, self.engine)
-            #print(df_sql)
             return self.df_sql
 
         except Exception as e:
             print(f"Error reading from database: {e}")
             return None
         finally:
-            # Ensure the database connection is closed
-            self.engine.dispose()
+            self.engine.dispose()  # Ensure the database connection is closed
 
-    
-    def df_sql_reader2(self, name_tabel):
-        #print(inspect(self.engine).get_table_names())
+    def df_sql_reader2(self, name_table):
         try:
             if len(self.tables) > 0:
-                self.name_tabel = name_tabel
-                self.df_sql = pd.read_sql(self.name_tabel, self.engine)
+                self.name_table = name_table
+                self.df_sql = pd.read_sql(self.name_table, self.engine)
                 return self.df_sql
 
         except:
-            raise Warning('No Tables Found')
+            raise Warning('No Tables Found')  # Raise warning if no tables are found
 
 
 class Backtest():
@@ -390,131 +377,257 @@ class Backtest():
 
         return self.output
 
-#bt = DataSQL('BTCUSDT' , '15m', '365 days ago UTC', 'now')
-bt = DataSQL('BTCUSDT' , '1h', '2020-05-01', '2024-11-01')
-reader = SqlReader()
-print(reader.get_tables())
-Backtest.set_db(input('Please write name of tabel: '))
+
+# if __name__ == "__main__":
+#     # Initialize the DataSQL object
+#     # bt = DataSQL('BTCUSDT', '15m', '365 days ago UTC', 'now')
+#     bt = DataSQL('BTCUSDT', '1h', '2020-05-01', '2024-11-01')
+    
+#     reader = SqlReader()
+#     print(reader.get_tables())
+#     Backtest.set_db(input('Please write name of table: '))
+
+#     # Define parameter ranges
+#     pct_buy = np.round(np.arange(-4, 5, 0.3), 1)    # Pct buy thresholds
+#     pct_sell = np.round(np.arange(0, 5, 0.3), 1)   # Pct sell thresholds
+#     rsi_buy = np.arange(15, 30, 2)                  # RSI Buy thresholds
+#     rsi_sell = np.arange(75, 95, 2)                 # RSI Sell thresholds
+
+#     # Create DataFrames for each parameter
+#     df_pct_buy = pd.DataFrame(pct_buy, columns=['pct_buy'])
+#     df_pct_sell = pd.DataFrame(pct_sell, columns=['pct_sell'])
+#     df_rsi_buy = pd.DataFrame(rsi_buy, columns=['rsi_buy'])
+#     df_rsi_sell = pd.DataFrame(rsi_sell, columns=['rsi_sell'])
+
+#     # Perform cross join to create all combinations
+#     df_cross = df_pct_buy.merge(df_pct_sell, how='cross').merge(df_rsi_buy, how='cross').merge(df_rsi_sell, how='cross')
+
+#     # Specify the CSV file path
+#     csv_file_path = 'live_results.csv'
+
+#     # Initialize an empty DataFrame to collect outputs
+#     output_df = pd.DataFrame()
+
+#     # Initialize variable to store the last final equity
+#     last_final_equity = None
+
+#     # Check if CSV exists and read last row if it does
+#     if os.path.exists(csv_file_path):
+#         df_existing = pd.read_csv(csv_file_path)
+#         if not df_existing.empty:  # Check if df_existing is not empty
+#             # Remove the last three rows
+#             df_existing = df_existing[:-3]
+#             df_existing.to_csv(csv_file_path, index=False)  # Update the CSV
+
+#             # Get the last parameters used from the existing CSV
+#             last_row = df_existing.iloc[-1]  # Safe to access the last row now
+#             last_pct_buy = last_row['pct_buy']
+#             last_pct_sell = last_row['pct_sell']
+#             last_rsi_buy = last_row['rsi_buy']
+#             last_rsi_sell = last_row['rsi_sell']
+
+#             # Filter df_cross to only include combinations after the last recorded row
+#             df_cross = df_cross[(df_cross['pct_buy'] > last_pct_buy) | 
+#                                 ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] > last_pct_sell)) |
+#                                 ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] == last_pct_sell) & (df_cross['rsi_buy'] > last_rsi_buy)) |
+#                                 ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] == last_sell) & (df_cross['rsi_buy'] == last_rsi_buy) & (df_cross['rsi_sell'] > last_rsi_sell))]
+#         else:
+#             print("The existing CSV file is empty. Proceeding with all parameter combinations.")
+
+#     # Loop over each parameter combination
+#     for _, row in df_cross.iterrows():
+#         # Run the Backtest with each parameter combination
+#         backtest = Backtest(
+#             cash=1000,  # Initial cash amount used for backtest
+#             fees=0.001,
+#             rsi_buy=row['rsi_buy'],
+#             rsi_sell=row['rsi_sell'],
+#             pct_buy=row['pct_buy'],
+#             pct_sell=row['pct_sell'],
+#             tp=0,
+#             sl=0
+#         )
+
+#         # Assume `backtest.output` returns a dictionary-like structure for easy conversion
+#         output_series = pd.Series(backtest.output)
+
+#         # Add the current parameters to the output for reference
+#         output_series = pd.concat([row, output_series])
+
+#         # Get the final equity from the output
+#         current_final_equity = backtest.output.get('Final Cash')
+
+#         # Check if the final equity is different from the initial cash and has changed compared to last recorded equity
+#         if current_final_equity != 1000 and (last_final_equity is None or current_final_equity != last_final_equity):
+#             # Append the output to the DataFrame
+#             output_df = pd.concat([output_df, output_series.to_frame().T], ignore_index=True)
+
+#             # Update the last final equity
+#             last_final_equity = current_final_equity
+            
+#             # Append the results to the CSV file
+#             output_df.to_csv(csv_file_path, mode='a', header=not pd.io.common.file_exists(csv_file_path), index=False)
+
+#             dt = datetime.now()
+#             if dt.minute % 2 == 0 and (18 <= dt.second <= 20):
+#                 print("\033c")
+#                 df = pd.read_csv(csv_file_path)
+#                 sorted_df = df.sort_values(by=['Final Cash', 'Max. Drawdown [%]'], 
+#                                             ascending=[False, True])
+
+#                 # Filter to only keep rows where Max. Drawdown [%] is greater than -50%
+#                 filtered_df = sorted_df[sorted_df['Max. Drawdown [%]'] > -60]
+
+#                 # Select only the important columns for display
+#                 important_columns = ['pct_buy', 'pct_sell', 'rsi_buy', 'rsi_sell',
+#                                     '# Trades', 'Win Rate [%]', 'Return [%]', 
+#                                     'Max. Drawdown [%]', 'Final Cash']
+
+#                 # Get top 25 entries from the filtered DataFrame
+#                 top_final_cash = filtered_df[important_columns].head(25)
+
+#                 # Round columns for readability
+#                 top_final_cash = top_final_cash.round({
+#                     'Final Cash': 2, 
+#                     'Return [%]': 2, 
+#                     'Max. Drawdown [%]': 2, 
+#                     'Win Rate [%]': 2,
+#                 })
+
+#                 # Print the top rows in a formatted table with the "pretty" style
+#                 print("---------------------------HEXABOT Rami Sayed----------------------")
+#                 print(f"Highest Final Cash and Max Drawdown {row['pct_buy']} : {row['pct_sell']} - {row['rsi_buy']} : {row['rsi_sell']} ")
+#                 print("-------------------------------------------------------------------")
+#                 print(tabulate(top_final_cash, headers='keys', tablefmt='pretty', showindex=False))
 
 
-#backtest = Backtest( cash=70000 , fees=.001 ,rsi_buy=30,  rsi_sell=85, pct_buy=-4, pct_sell=3, tp=0.03, sl=.02)
-#print(backtest.output)
-#####################################################################################
-#####################################################################################
 
-# Define parameter rangesimport numpy as np
-import pandas as pd
-import os
-from datetime import datetime
-from tabulate import tabulate
 
-# Define parameter ranges
-pct_buy = np.round(np.arange(-4, 5, 0.3), 1)    # Pct buy thresholds
-pct_sell = np.round(np.arange(0, 5, 0.3), 1)   # Pct sell thresholds
-rsi_buy = np.arange(15, 30, 2)                  # RSI Buy thresholds
-rsi_sell = np.arange(75, 95, 2)                 # RSI Sell thresholds
+if __name__ == "__main__":
+    # Initialize the DataSQL object
+    bt = DataSQL('BTCUSDT', '1h', '2020-05-01', '2024-11-01')
+    cash = 1000
+    
+    reader = SqlReader()
+    print(reader.get_tables())
+    Backtest.set_db(input('Please write name of table: '))
 
-# Create DataFrames for each parameter
-df_pct_buy = pd.DataFrame(pct_buy, columns=['pct_buy'])
-df_pct_sell = pd.DataFrame(pct_sell, columns=['pct_sell'])
-df_rsi_buy = pd.DataFrame(rsi_buy, columns=['rsi_buy'])
-df_rsi_sell = pd.DataFrame(rsi_sell, columns=['rsi_sell'])
+    # Define parameter ranges
+    pct_buy = np.round(np.arange(-4, 5, 0.3), 1)    # Pct buy thresholds
+    pct_sell = np.round(np.arange(0, 5, 0.3), 1)   # Pct sell thresholds
+    rsi_buy = np.arange(15, 30, 2)                  # RSI Buy thresholds
+    rsi_sell = np.arange(75, 95, 2)                 # RSI Sell thresholds
 
-# Perform cross join to create all combinations
-df_cross = df_pct_buy.merge(df_pct_sell, how='cross').merge(df_rsi_buy, how='cross').merge(df_rsi_sell, how='cross')
+    # Create DataFrames for each parameter
+    df_pct_buy = pd.DataFrame(pct_buy, columns=['pct_buy'])
+    df_pct_sell = pd.DataFrame(pct_sell, columns=['pct_sell'])
+    df_rsi_buy = pd.DataFrame(rsi_buy, columns=['rsi_buy'])
+    df_rsi_sell = pd.DataFrame(rsi_sell, columns=['rsi_sell'])
 
-# Specify the CSV file path
-csv_file_path = 'live_results.csv'
+    # Perform cross join to create all combinations
+    df_cross = df_pct_buy.merge(df_pct_sell, how='cross').merge(df_rsi_buy, how='cross').merge(df_rsi_sell, how='cross')
 
-# Initialize an empty DataFrame to collect outputs
-output_df = pd.DataFrame()
+    # Specify the CSV file path
+    csv_file_path = 'live_results.csv'
 
-# Initialize variable to store the last final equity
-last_final_equity = None
+    # Initialize an empty DataFrame to collect outputs
+    output_df = pd.DataFrame()
 
-# Check if CSV exists and read last row if it does
-if os.path.exists(csv_file_path):
-    df_existing = pd.read_csv(csv_file_path)
-    if not df_existing.empty:
-        # Remove the last three rows
-        df_existing = df_existing[:-3]
-        df_existing.to_csv(csv_file_path, index=False)  # Update the CSV
+    # Initialize variable to store the last final equity
+    last_final_equity = None
 
-        # Get the last parameters used from the existing CSV
-        last_row = df_existing.iloc[-1]
-        last_pct_buy = last_row['pct_buy']
-        last_pct_sell = last_row['pct_sell']
-        last_rsi_buy = last_row['rsi_buy']
-        last_rsi_sell = last_row['rsi_sell']
+    # Check if CSV exists and read last row if it does
+    if os.path.exists(csv_file_path):
+        df_existing = pd.read_csv(csv_file_path)
+        if not df_existing.empty:  # Check if df_existing is not empty
+            # Remove the last three rows
+            df_existing = df_existing[:-3]
+            df_existing.to_csv(csv_file_path, index=False)  # Update the CSV
 
-        # Filter df_cross to only include combinations after the last recorded row
-        df_cross = df_cross[(df_cross['pct_buy'] > last_pct_buy) | 
-                            ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] > last_pct_sell)) |
-                            ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] == last_pct_sell) & (df_cross['rsi_buy'] > last_rsi_buy)) |
-                            ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] == last_pct_sell) & (df_cross['rsi_buy'] == last_rsi_buy) & (df_cross['rsi_sell'] > last_rsi_sell))]
+            # Get the last parameters used from the existing CSV
+            last_row = df_existing.iloc[-1]  # Safe to access the last row now
+            last_pct_buy = last_row['pct_buy']
+            last_pct_sell = last_row['pct_sell']
+            last_rsi_buy = last_row['rsi_buy']
+            last_rsi_sell = last_row['rsi_sell']
 
-# Loop over each parameter combination
-for _, row in df_cross.iterrows():
-    # Run the Backtest with each parameter combination
-    backtest = Backtest(
-        cash=1000,  # Initial cash amount used for backtest
-        fees=0.001,
-        rsi_buy=row['rsi_buy'],
-        rsi_sell=row['rsi_sell'],
-        pct_buy=row['pct_buy'],
-        pct_sell=row['pct_sell'],
-        tp=0,
-        sl=0
-    )
+            # Filter df_cross to only include combinations after the last recorded row
+            df_cross = df_cross[(df_cross['pct_buy'] > last_pct_buy) | 
+                                ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] > last_pct_sell)) |
+                                ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] == last_pct_sell) & (df_cross['rsi_buy'] > last_rsi_buy)) |
+                                ((df_cross['pct_buy'] == last_pct_buy) & (df_cross['pct_sell'] == last_pct_sell) & (df_cross['rsi_buy'] == last_rsi_buy) & (df_cross['rsi_sell'] > last_rsi_sell))]
+        else:
+            print("The existing CSV file is empty. Proceeding with all parameter combinations.")
 
-    # Assume `backtest.output` returns a dictionary-like structure for easy conversion
-    output_series = pd.Series(backtest.output)
+    # Loop over each parameter combination
+    for _, row in df_cross.iterrows():
+        # Run the Backtest with each parameter combination
+        backtest = Backtest(
+            cash=cash,  # Initial cash amount used for backtest
+            fees=0.001,
+            rsi_buy=row['rsi_buy'],
+            rsi_sell=row['rsi_sell'],
+            pct_buy=row['pct_buy'],
+            pct_sell=row['pct_sell'],
+            tp=0,
+            sl=0
+        )
 
-    # Add the current parameters to the output for reference
-    output_series = pd.concat([row, output_series])
+        # Assume `backtest.output` returns a dictionary-like structure for easy conversion
+        output_series = pd.Series(backtest.output)
 
-    # Get the final equity from the output
-    current_final_equity = backtest.output.get('Final Cash')
+        # Add the current parameters to the output for reference
+        output_series = pd.concat([row, output_series])
 
-    # Check if the final equity is different from the initial cash and has changed compared to last recorded equity
-    if current_final_equity != 1000 and (last_final_equity is None or current_final_equity != last_final_equity):
-        # Append the output to the DataFrame
-        output_df = pd.concat([output_df, output_series.to_frame().T], ignore_index=True)
+        # Get the final equity and max drawdown from the output
+        current_final_equity = backtest.output.get('Final Cash')
+        max_drawdown = backtest.output.get('Max. Drawdown [%]')  # Assuming this value is returned
 
-        # Update the last final equity
-        last_final_equity = current_final_equity
-        
-        # Append the results to the CSV file
-        output_df.to_csv(csv_file_path, mode='a', header=not pd.io.common.file_exists(csv_file_path), index=False)
+        # Check if the final equity is different from the initial cash and has changed compared to last recorded equity
+        if current_final_equity != cash and (last_final_equity is None or current_final_equity != last_final_equity):
+            # Append the output to the DataFrame regardless of the max drawdown condition
+            output_df = pd.concat([output_df, output_series.to_frame().T], ignore_index=True)
 
-        dt = datetime.now()
-        if dt.minute % 2 == 0 and (18 <= dt.second <= 20):
-            print("\033c")
-            df = pd.read_csv(csv_file_path)
-            sorted_df = df.sort_values(by=['Final Cash', 'Max. Drawdown [%]'], 
-                                        ascending=[False, True])
+            # Update the last final equity
+            last_final_equity = current_final_equity
+            
+            # Append the results to the CSV file
+            output_df.to_csv(csv_file_path, mode='a', header=not pd.io.common.file_exists(csv_file_path), index=False)
 
-            # Filter to only keep rows where Max. Drawdown [%] is greater than -50%
-            filtered_df = sorted_df[sorted_df['Max. Drawdown [%]'] > -60]
+            dt = datetime.now()
+            if dt.minute % 2 == 0 and (18 <= dt.second <= 20):
+                print("\033c")
+                df = pd.read_csv(csv_file_path)
 
-            # Select only the important columns for display
-            important_columns = ['pct_buy', 'pct_sell', 'rsi_buy', 'rsi_sell',
-                                '# Trades', 'Win Rate [%]', 'Return [%]', 
-                                'Max. Drawdown [%]', 'Final Cash']
+                # Sort the DataFrame by 'Final Cash' and 'Max. Drawdown [%]'
+                sorted_df = df.sort_values(
+                    by=['Final Cash', 'Max. Drawdown [%]'], ascending=[False, True])
 
-            # Get top 25 entries from the filtered DataFrame
-            top_final_cash = filtered_df[important_columns].head(25)
+                # Filter to keep only rows where Max. Drawdown [%] is greater than -60%
+                filtered_df = sorted_df[sorted_df['Max. Drawdown [%]'] > -60]
 
-            # Round columns for readability
-            top_final_cash = top_final_cash.round({
-                'Final Cash': 2, 
-                'Return [%]': 2, 
-                'Max. Drawdown [%]': 2, 
-                'Win Rate [%]': 2,
-            })
+                # Drop duplicates based on 'Final Cash' to get unique final cash values
+                unique_final_cash_df = filtered_df.drop_duplicates(subset=['Final Cash'])
 
-            # Print the top rows in a formatted table with the "pretty" style
-            print("---------------------------HEXABOT Rami Sayed----------------------")
-            print(f"Highest Final Cash and  Max Drawdown {row['pct_buy']} : {row['pct_sell']} - {row['rsi_buy']} : {row['rsi_sell']} ")
-            print("-------------------------------------------------------------------")
-            print(tabulate(top_final_cash, headers='keys', tablefmt='pretty', showindex=False))
+                # Select the important columns for display
+                important_columns = ['pct_buy', 'pct_sell', 'rsi_buy', 'rsi_sell',
+                                    '# Trades', 'Win Rate [%]', 'Return [%]',
+                                    'Max. Drawdown [%]', 'Final Cash']
+
+                # Get the top 25 entries from the unique final cash DataFrame
+                top_final_cash = unique_final_cash_df[important_columns].head(25)
+
+                # Round columns for readability
+                top_final_cash = top_final_cash.round({
+                    'Final Cash': 2,
+                    'Return [%]': 2,
+                    'Max. Drawdown [%]': 2,
+                    'Win Rate [%]': 2,
+                })
+
+                # Print the top rows in a formatted table with the "pretty" style
+                print("---------------------------HEXABOT Rami Sayed----------------------")
+                print(f"Highest Final Cash and Max Drawdown ")
+                print("-------------------------------------------------------------------")
+                print(tabulate(top_final_cash, headers='keys',
+                    tablefmt='pretty', showindex=False))
